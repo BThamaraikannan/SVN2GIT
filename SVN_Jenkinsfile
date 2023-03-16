@@ -1,0 +1,112 @@
+pipeline {
+    agent { label 'OIT-ENTAPPS-DEVOPS-TEST' }
+    stages {
+        stage ('clean workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('checkout SVN repo') {
+            steps {
+                checkout([$class: 'SubversionSCM', 
+                additionalCredentials: [], 
+                excludedCommitMessages: '', 
+                excludedRegions: '', 
+                excludedRevprop: '', 
+                excludedUsers: '', 
+                filterChangelog: false, 
+                ignoreDirPropChanges: false, 
+                includedRegions: '', 
+                locations: [[cancelProcessOnExternalsFail: true, credentialsId: 'cap_pulse_svn', depthOption: 'infinity', ignoreExternalsOption: true, local: "${Local_SVN_Repo}", remote: "${SVN_Repo}"]], 
+                quietOperation: true, 
+                workspaceUpdater: [$class: 'UpdateUpdater']])
+                script{
+                    /*sh '''
+                        #!/bin/bash
+                        cd "${Local_SVN_Repo}"
+                        svn upgrade
+                        #svnn log | grep '^r[0-9]' | awk '{print $3}' | sort | uniq > "${WORKSPACE}"/authors.txt
+                        svn log -q | awk -F '|' '/^r/ {sub("^ ", "", $2); sub(" $", "", $2); print $2" = "$2" <"$2">"}' | sort -u > "${WORKSPACE}"/authors.txt    
+                    '''*/
+                    sh '''
+                        cd "${Local_SVN_Repo}"
+                        svn upgrade
+                        svn log -q | awk -F '|' '/^r/ {sub("^ ", "", $2); sub(" $", "", $2); print $2" = "$2" <"$2">"}' | sort -u > "${WORKSPACE}"/authors.txt
+                    '''
+                }
+
+ 
+            }
+        }
+        stage('svn to git migration') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'cap_pulse_svn', passwordVariable: 'pwdss', usernameVariable: 'usr')]) {
+                    script{
+                        /*sh '''
+                            #!/bin/bash
+                            echo -n "$pwd" | git svn clone --username "$usr" --follow-parent "${SVN_Repo}" --authors-file=${WORKSPACE}/authors.txt "${Local_GIT_Repo}"
+                        '''*/
+                        sh "echo -n $pwdss | git svn clone -s --username $usr --follow-parent $SVN_Repo --authors-file=${WORKSPACE}/authors.txt $Local_GIT_Repo"
+                    }
+                }
+            }              
+        }
+        stage('Migrating the tag/s and branches to git') {
+            steps {
+                script{  
+                    sh '''
+                        #!/bin/bash
+                        cd "${Local_GIT_Repo}"
+                        for t in $(git for-each-ref --format='%(refname:short)' refs/remotes/tags); do git tag ${t/tags\\//} $t && git branch -D -r $t; done
+                        for b in $(git for-each-ref --format='%(refname:short)' refs/remotes); do git branch $b refs/remotes/$b && git branch -D -r $b; done
+                        #if [git branch | grep "\\btrunk\\b"];
+                        #then
+                        #    git branch -d trunk
+                        #fi
+                    '''
+                }
+            }
+        }
+        stage('Pushing to OraHub') {
+            steps {
+                //api token to access CAP svn repo, replace with the generic credentialsId from Jenkins
+               // withCredentials([string(credentialsId: 'cap-AutomationFramework', variable: 'GITLAB_API_TOKEN')]) {
+               // withCredentials([string(credentialsId: 'cap-rest-hostaccess', variable: 'GITLAB_API_TOKEN')]) {
+               // withCredentials([string(credentialsId: 'cap-rest-common', variable: 'GITLAB_API_TOKEN')]) {
+               // withCredentials([string(credentialsId: 'cap-rest-mos', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'CAP-OBIEEProxy', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-cmp', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-rest-cmds', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-rest-btma', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-rest-myocs', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-rests-osa', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-api-gateway', variable: 'GITLAB_API_TOKEN')]) {
+                //withCredentials([string(credentialsId: 'cap-rest-template', variable: 'GITLAB_API_TOKEN')]) {
+                  withCredentials([string(credentialsId: 'OracleSPG', variable: 'GITLAB_API_TOKEN')]) { 
+                //withCredentials([string(credentialsId: 'cap-myocs-db', variable: 'GITLAB_API_TOKEN')]) { 
+                //withCredentials([string(credentialsId: 'cap-rest-mos', variable: 'GITLAB_API_TOKEN')]) {
+                //api token to access opncc svn repo
+                //withCredentials([string(credentialsId: 'btk-pats', variable: 'GITLAB_API_TOKEN')]) {
+                    script{
+                        sh '''
+                            #!/bin/bash
+                            cd "${Local_GIT_Repo}"
+                            #git remote rm origin
+                            #git remote add origin `echo "https://"${usr}"@"${Orahub_Repo}""`
+                            git config user.name kannan;git config user.email "b.thamarai.kannan@oracle.com"
+                            git config --global push.default simple
+                            git init
+                            git pull https://gitlab-ci-token:$GITLAB_API_TOKEN@"${Orahub_Repo}"
+                            rm -rf test
+                            rm -rf .svn
+                            git add -A;git commit -m "test"
+                            #git push -f https://gitlab-ci-token:$GITLAB_API_TOKEN@"${Orahub_Repo}"
+                            git push --set-upstream https://gitlab-ci-token:$GITLAB_API_TOKEN@"${Orahub_Repo}" master
+
+                        '''
+                    }
+                }    
+            }
+        }
+    } 
+}
